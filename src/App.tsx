@@ -435,6 +435,20 @@ async function hasAdminAccess(): Promise<boolean> {
   return data === true;
 }
 
+function publicationFailureMessage(error: { code?: string; message?: string; details?: string; hint?: string }): string {
+  const details = [error.message, error.details, error.hint].filter(Boolean).join(" ").toLowerCase();
+  if (details.includes("private_employer_verification_required")) {
+    return "Private employer verification is incomplete. Open Verification, save review notes of at least 5 characters, and mark the review complete. Then edit the vacancy, set its verification status to Verified, save, and retry publishing.";
+  }
+  if (error.code === "23514") {
+    return "Database validation blocked publication. Set the vacancy verification status to Verified and save a completed private employer verification record with notes of at least 5 characters.";
+  }
+  if (error.code === "42501") {
+    return "Supabase denied this action. Confirm this account is authorized in public.admin_users and the admin and schema migrations have been applied.";
+  }
+  return "Unable to publish this vacancy. Check the vacancy and private employer verification, then try again.";
+}
+
 function AdminLogin() {
   const { t } = useCopy();
   const navigate = useNavigate();
@@ -619,7 +633,16 @@ function AdminPanel() {
         section === "applications" ? <AdminApplications rows={rows} onRefresh={() => setRefreshKey(value => value + 1)} /> :
           section === "enquiries" ? <AdminEnquiries rows={rows} onRefresh={() => setRefreshKey(value => value + 1)} /> : <AdminOverview rows={rows} />}
       {showJobForm && <JobEditor job={editingJob} onClose={() => setShowJobForm(false)} onSaved={message => { setShowJobForm(false); setSuccess(message); setError(""); setRefreshKey(value => value + 1); }} />}
-      {verificationJob && <VerificationEditor job={verificationJob} onClose={() => setVerificationJob(null)} />}
+      {verificationJob && <VerificationEditor
+        job={verificationJob}
+        onClose={() => setVerificationJob(null)}
+        onSaved={message => {
+          setVerificationJob(null);
+          setSuccess(message);
+          setError("");
+          setRefreshKey(value => value + 1);
+        }}
+      />}
     </section>
   </div></div>;
 }
@@ -647,9 +670,7 @@ function AdminJobs({ jobs, onEdit, onVerify, onRefresh }: { jobs: Job[]; onEdit:
     const { error: updateError } = await supabase.from("jobs").update({ publication_status: status }).eq("id", job.id);
     setBusyJobId("");
     if (updateError) {
-      setActionError(status === "published"
-        ? "Unable to publish this vacancy. Complete and save the private employer verification first, then set its verification status to Verified."
-        : "Unable to update this vacancy. Please try again.");
+      setActionError(status === "published" ? publicationFailureMessage(updateError) : "Unable to update this vacancy. Please try again.");
       return;
     }
     onRefresh(status === "published" ? "Vacancy published." : status === "closed" ? "Vacancy closed." : "Vacancy unpublished and saved as a draft.");
@@ -729,7 +750,7 @@ function AdminEnquiries({ rows, onRefresh }: { rows: Record<string, unknown>[]; 
   </tbody></table></div></>;
 }
 
-function VerificationEditor({ job, onClose }: { job: Job; onClose: () => void }) {
+function VerificationEditor({ job, onClose, onSaved }: { job: Job; onClose: () => void; onSaved: (message: string) => void }) {
   const [record, setRecord] = useState<Record<string, unknown> | null>();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -744,20 +765,40 @@ function VerificationEditor({ job, onClose }: { job: Job; onClose: () => void })
   }, [job.id]);
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setBusy(true); setError("");
-    if (!supabase) { setError("Supabase is not configured."); setBusy(false); return; }
-    const form = new FormData(event.currentTarget);
-    const { data: { user } } = await supabase.auth.getUser();
-    const complete = form.get("complete") === "on";
-    const result = await supabase.from("employer_verifications").upsert({
-      job_id: job.id,
-      employer_legal_name: String(form.get("legal_name")).trim() || null,
-      partner_registration_details: String(form.get("partner_details")).trim() || null,
-      verification_notes: String(form.get("notes")).trim() || null,
-      verified_by: complete ? user?.id ?? null : null,
-      verified_at: complete ? new Date().toISOString() : null,
-    });
-    if (result.error) { setError("Unable to save private verification information."); setBusy(false); return; }
-    onClose();
+    try {
+      if (!supabase) { setError("Supabase is not configured."); return; }
+      const form = new FormData(event.currentTarget);
+      const complete = form.get("complete") === "on";
+      const notes = String(form.get("notes")).trim();
+      if (complete && notes.length < 5) {
+        setError("Add private review notes of at least 5 characters before marking this review complete.");
+        return;
+      }
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (userError || !user) {
+        setError("Your administrator session could not be verified. Sign in again and retry.");
+        return;
+      }
+      const { error: saveError } = await supabase.from("employer_verifications").upsert({
+        job_id: job.id,
+        employer_legal_name: String(form.get("legal_name")).trim() || null,
+        partner_registration_details: String(form.get("partner_details")).trim() || null,
+        verification_notes: notes || null,
+        verified_by: complete ? user.id : null,
+        verified_at: complete ? new Date().toISOString() : null,
+      });
+      if (saveError) {
+        setError(saveError.message.includes("unpublish_job_before_reversing_verification")
+          ? "Unpublish this vacancy before removing its completed verification."
+          : "Unable to save private verification information. Confirm your administrator access and try again.");
+        return;
+      }
+      onSaved("Private employer verification saved. Set the vacancy's verification status to Verified in Edit before publishing.");
+    } catch {
+      setError("Unable to save private verification information. Check your connection and try again.");
+    } finally {
+      setBusy(false);
+    }
   }
   if (record === undefined && !error) return <div className="modal-backdrop"><div className="job-editor">Loading private verification information…</div></div>;
   return <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
@@ -766,9 +807,9 @@ function VerificationEditor({ job, onClose }: { job: Job; onClose: () => void })
       {error && <InlineNotice>{error}</InlineNotice>}
       <FormField label="Employer legal name" name="legal_name" defaultValue={String(record?.employer_legal_name ?? "")} />
       <label className="form-field"><span>Partner registration details (if applicable)</span><textarea name="partner_details" rows={3} defaultValue={String(record?.partner_registration_details ?? "")} /></label>
-      <label className="form-field"><span>Private verification notes</span><textarea name="notes" rows={5} defaultValue={String(record?.verification_notes ?? "")} /></label>
+      <label className="form-field"><span>Private verification notes (at least 5 characters to complete review)</span><textarea name="notes" rows={5} maxLength={4000} defaultValue={String(record?.verification_notes ?? "")} /></label>
       <label className="consent-row"><input type="checkbox" name="complete" defaultChecked={Boolean(record?.verified_at)} /><span>Verification review is complete; record who reviewed it.</span></label>
-      <p className="tiny-muted">Keep private evidence out of public vacancy fields. Upload no identity documents here until a lawful secure process is established.</p>
+      <p className="tiny-muted">To publish, complete this private review and also set the vacancy's verification status to Verified in Edit. Employer legal name and partner registration details are optional reference fields. Keep confidential evidence out of public vacancy fields; do not upload identity documents here.</p>
       <div className="modal-actions"><button type="button" className="button button-quiet" onClick={onClose}>Cancel</button><button className="button button-gold" disabled={busy}>{busy ? "Saving…" : "Save private record"}</button></div>
     </form>
   </div>;
@@ -820,7 +861,7 @@ function JobEditor({ job, onClose, onSaved }: { job: Job | null; onClose: () => 
         : await supabase.from("jobs").insert(record);
       if (result.error) {
         setError(record.publication_status === "published"
-          ? "The vacancy could not be published. Complete private employer verification and set the verification status to Verified first."
+          ? publicationFailureMessage(result.error)
           : "The vacancy could not be saved. Check the required fields, slug format, and salary range.");
         return;
       }
