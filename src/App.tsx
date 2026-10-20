@@ -442,9 +442,9 @@ function AdminLogin() {
   const [busy, setBusy] = useState(false);
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setBusy(true); setError("");
-    if (!supabase) { setError(t("admin.unconfigured")); setBusy(false); return; }
-    const form = new FormData(event.currentTarget);
     try {
+      if (!supabase) { setError(t("admin.unconfigured")); return; }
+      const form = new FormData(event.currentTarget);
       const { data, error: authError } = await supabase.auth.signInWithPassword({
         email: String(form.get("email")).trim(),
         password: String(form.get("password")),
@@ -456,7 +456,9 @@ function AdminLogin() {
             ? t("admin.invalidCredentials")
             : message.includes("too many requests") || message.includes("rate limit")
               ? t("admin.tooManyAttempts")
-              : t("admin.loginFailed"),
+              : message.includes("email not confirmed")
+                ? t("admin.emailNotConfirmed")
+                : t("admin.loginFailed"),
         );
         return;
       }
@@ -464,12 +466,26 @@ function AdminLogin() {
         setError(t("admin.loginFailed"));
         return;
       }
-      if (!(await hasAdminAccess())) {
-        const { error: signOutError } = await supabase.auth.signOut();
-        if (signOutError) throw signOutError;
+
+      let authorized: boolean;
+      try {
+        authorized = await hasAdminAccess();
+      } catch {
+        const signedOut = await clearLoginSession();
+        setError(signedOut ? t("admin.authorizationCheckFailed") : t("admin.authorizationCheckFailedSignOutFailed"));
+        return;
+      }
+
+      if (!authorized) {
+        const signedOut = await clearLoginSession();
+        if (!signedOut) {
+          setError(t("admin.authorizationCheckFailedSignOutFailed"));
+          return;
+        }
         setError(t("admin.noAccess"));
         return;
       }
+
       navigate("/admin");
     } catch {
       setError(t("admin.loginFailed"));
@@ -486,6 +502,16 @@ function AdminLogin() {
       <button className="button button-navy full-width" disabled={busy || !isSupabaseConfigured}>{busy ? t("admin.signingIn") : t("admin.signin")}<LogIn size={17} /></button>
     </form></div>
   </PageHero>;
+}
+
+async function clearLoginSession(): Promise<boolean> {
+  if (!supabase) return false;
+  try {
+    const { error: signOutError } = await supabase.auth.signOut();
+    return !signOutError;
+  } catch {
+    return false;
+  }
 }
 
 type AdminState = "loading" | "admin" | "denied" | "signedOut" | "unconfigured";
