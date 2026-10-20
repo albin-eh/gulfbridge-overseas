@@ -36,7 +36,7 @@ npm run preview
    VITE_BUSINESS_EMAIL=gulfbridgeoverseas.careers@gmail.com
    VITE_BUSINESS_PHONE=
    VITE_WHATSAPP_URL=
-   VITE_INSTAGRAM_URL=
+   VITE_INSTAGRAM_URL=https://www.instagram.com/gulfbridge.careers/
    VITE_BUSINESS_ADDRESS=
    VITE_RECRUITMENT_PARTNER_PUBLIC_DETAILS=
    ```
