@@ -16,6 +16,8 @@ type Key = keyof typeof en;
 type Language = "en" | "ml";
 const dictionaries = { en, ml };
 const LanguageContext = createContext<{ lang: Language; setLang: (value: Language) => void; t: (key: Key, vars?: Record<string, string>) => string } | null>(null);
+const businessEmail = import.meta.env.VITE_BUSINESS_EMAIL?.trim() || "gulfbridgeoverseas.careers@gmail.com";
+const instagramUrl = import.meta.env.VITE_INSTAGRAM_URL?.trim() || "https://www.instagram.com/gulfbridge.careers/";
 
 function useCopy() {
   const context = useContext(LanguageContext);
@@ -91,10 +93,8 @@ function RoutesContent() {
 
 function Footer() {
   const { t } = useCopy();
-  const email = import.meta.env.VITE_BUSINESS_EMAIL as string | undefined;
   const phone = import.meta.env.VITE_BUSINESS_PHONE as string | undefined;
   const whatsapp = import.meta.env.VITE_WHATSAPP_URL as string | undefined;
-  const instagram = import.meta.env.VITE_INSTAGRAM_URL as string | undefined;
   const address = import.meta.env.VITE_BUSINESS_ADDRESS as string | undefined;
   const partnerDetails = import.meta.env.VITE_RECRUITMENT_PARTNER_PUBLIC_DETAILS as string | undefined;
   return <footer className="site-footer">
@@ -106,10 +106,10 @@ function Footer() {
       </div>
       <div><h3>Explore</h3><Link to="/jobs">{t("nav.jobs")}</Link><Link to="/how-it-works">{t("nav.process")}</Link><Link to="/safety">{t("nav.safety")}</Link></div>
       <div><h3>{t("nav.contact")}</h3>
-        {email ? <a href={`mailto:${email}`}><Mail size={15} />{email}</a> : <span className="muted-footer">Business email to be configured</span>}
-        {phone ? <a href={`tel:${phone}`}><Phone size={15} />{phone}</a> : <span className="muted-footer">Business phone to be configured</span>}
-        {whatsapp ? <a href={whatsapp} target="_blank" rel="noreferrer"><Phone size={15} />WhatsApp</a> : <span className="muted-footer">WhatsApp contact to be configured</span>}
-        {instagram ? <a href={instagram} target="_blank" rel="noreferrer"><Instagram size={15} />Instagram</a> : <span className="muted-footer">Instagram profile to be configured</span>}
+        <a href={`mailto:${businessEmail}`}><Mail size={15} />{businessEmail}</a>
+        {phone && <a href={`tel:${phone}`}><Phone size={15} />{phone}</a>}
+        {whatsapp && <a href={whatsapp} target="_blank" rel="noreferrer"><Phone size={15} />WhatsApp</a>}
+        <a href={instagramUrl} target="_blank" rel="noreferrer"><Instagram size={15} />Instagram</a>
         {address && <span className="muted-footer">{address}</span>}
         {partnerDetails && <span className="muted-footer">{partnerDetails}</span>}
       </div>
@@ -382,6 +382,8 @@ function ContactPage() {
   const { t } = useCopy();
   const [message, setMessage] = useState("");
   const [sent, setSent] = useState(false);
+  const phone = import.meta.env.VITE_BUSINESS_PHONE?.trim();
+  const whatsapp = import.meta.env.VITE_WHATSAPP_URL?.trim();
   const address = import.meta.env.VITE_BUSINESS_ADDRESS as string | undefined;
   const partnerDetails = import.meta.env.VITE_RECRUITMENT_PARTNER_PUBLIC_DETAILS as string | undefined;
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -399,7 +401,13 @@ function ContactPage() {
     } catch { setMessage(t("common.error")); }
   }
   return <PageHero eyebrow="LET'S CONNECT" title={t("contact.title")} body={t("contact.intro")}><div className="container form-wrap contact-wrap">
-    <div className="contact-details"><h2>GulfBridge Overseas</h2><p>Business contact details will be published here when confirmed.</p><div><Mail />{import.meta.env.VITE_BUSINESS_EMAIL || "Business email to be configured"}</div><div><Phone />{import.meta.env.VITE_BUSINESS_PHONE || "Business phone to be configured"}</div>{address && <p>{address}</p>}{partnerDetails && <p>{partnerDetails}</p>}{!address && !partnerDetails && <p className="tiny-muted">Business address and authorized partner details will be shown here only if established and approved for public disclosure.</p>}</div>
+    <div className="contact-details"><h2>GulfBridge Overseas</h2><p>Reach us by email or follow us on Instagram.</p>
+      <div><Mail /><a href={`mailto:${businessEmail}`}>{businessEmail}</a></div>
+      <div><Instagram /><a href={instagramUrl} target="_blank" rel="noreferrer">Instagram · @gulfbridge.careers</a></div>
+      {phone && <div><Phone /><a href={`tel:${phone}`}>{phone}</a></div>}
+      {whatsapp && <div><Phone /><a href={whatsapp} target="_blank" rel="noreferrer">WhatsApp</a></div>}
+      {address && <p>{address}</p>}{partnerDetails && <p>{partnerDetails}</p>}
+    </div>
     <form className="form-card" onSubmit={handleSubmit}>
       {sent ? <div className="success-inline"><Check />{t("contact.sent")}</div> : <>
         {!isSupabaseConfigured && <InlineNotice>{t("admin.unconfigured")}</InlineNotice>}

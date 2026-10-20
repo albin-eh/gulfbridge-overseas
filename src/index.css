@@ -202,6 +202,8 @@ button { cursor: pointer; }
 .contact-details p { color: var(--muted); font-size: 13px; line-height: 1.75; }
 .contact-details > div { display: flex; align-items: center; gap: 10px; margin: 17px 0; color: #4d5868; font-size: 12px; }
 .contact-details svg { width: 17px; color: var(--gold); }
+.contact-details a { color: inherit; overflow-wrap: anywhere; }
+.contact-details a:hover { color: #9e771e; text-decoration: underline; }
 .success-inline { display: flex; align-items: center; gap: 10px; padding: 14px; color: #246449; background: #e9f7ef; font-size: 13px; }
 .login-wrap { max-width: 480px; padding-bottom: 90px; }
 .login-card { display: grid; gap: 16px; }

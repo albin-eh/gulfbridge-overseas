@@ -43,6 +43,8 @@ npm run preview
 
    These `VITE_` values are public browser configuration; only set contact or partner details approved for public disclosure.    A publishable key is intended for browser use and depends on RLS for data protection. Never put a service-role key in a `VITE_` variable or frontend file. This is a Vite app, so its browser variables use the `VITE_` prefix rather than Next.js's `NEXT_PUBLIC_` prefix.
 
+   The public contact page and footer include the GulfBridge enquiry email and Instagram profile as code defaults. Set optional phone, WhatsApp and address values in the deployment platform's Vite environment variables to show those additional details; Vite variables are embedded at build time, so changing them requires a new deployment.
+
 2. Apply the database migration using the Supabase CLI:
 
    ```sh
