@@ -74,7 +74,7 @@ npm run preview
 
    Disable public sign-ups in Supabase Auth unless there is a deliberate, separately secured account-provisioning process. Ordinary Auth registrations receive only a candidate profile; they cannot view or change the admin allowlist or add themselves to it. Never put a Supabase service-role/secret key in the frontend or a `VITE_` variable.
 
-5. Create a vacancy in the admin area as a draft. Record employer/legal verification details in the private verification panel. Before publication, confirm the lawful disclosure status, set the vacancy's verification status to `Verified`, and then set publication status to `Published`. The database rejects a published job that is not verified. Only publish information confirmed by authorized sources.
+5. In `/admin/jobs`, add or edit vacancies, change publication state, and delete records that have no linked applications. Public `/jobs` results are fetched from Supabase and only published, in-deadline vacancies are visible through the database RLS policy. Record employer/legal verification details in the private verification panel. Before publication, confirm the lawful disclosure status, set the vacancy's verification status to `Verified`, and then publish it. The database rejects a published job unless both the vacancy and its private employer verification record are verified. Jobs with linked applications cannot be deleted; close them instead to preserve application records. Only publish information confirmed by authorized sources.
 
 ## Database and privacy notes
 

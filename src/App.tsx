@@ -204,12 +204,20 @@ function JobsPage() {
   const { t } = useCopy();
   const [jobs, setJobs] = useState<Job[]>([]);
   const [error, setError] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [country, setCountry] = useState(new URLSearchParams(window.location.search).get("country") ?? "");
   const [category, setCategory] = useState("");
   const [experience, setExperience] = useState("");
   const [employment, setEmployment] = useState("");
-  useEffect(() => { listPublishedJobs().then(setJobs).catch(() => setError(true)); }, []);
+  useEffect(() => {
+    let active = true;
+    listPublishedJobs()
+      .then(result => { if (active) setJobs(result); })
+      .catch(() => { if (active) setError(true); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, []);
   const countries = [...new Set(jobs.map(job => job.country))];
   const categories = [...new Set(jobs.map(job => job.category))];
   const filtered = jobs.filter(job => {
@@ -229,7 +237,10 @@ function JobsPage() {
         <select value={experience} onChange={event => setExperience(event.target.value)} aria-label={t("jobs.experience")}><option value="">{t("jobs.experience")}</option>{["Entry", "Mid", "Senior"].map(value => <option key={value}>{value}</option>)}</select>
         <select value={employment} onChange={event => setEmployment(event.target.value)} aria-label={t("common.employment")}><option value="">{t("jobs.type")}</option>{[...new Set(jobs.map(job => job.employment_type).filter(Boolean))].map(value => <option key={value}>{value}</option>)}</select>
       </div>
-      {error ? <InlineNotice>{t("common.error")}</InlineNotice> : filtered.length ? <div className="job-grid">{filtered.map(job => <JobCard key={job.id} job={job} />)}</div> : <EmptyState title={t("jobs.empty")} body={t("jobs.emptyBody")} />}
+      {loading ? <div className="jobs-loading" role="status">Loading current vacancies…</div>
+        : error ? <InlineNotice>{t("common.error")}</InlineNotice>
+          : filtered.length ? <div className="job-grid">{filtered.map(job => <JobCard key={job.id} job={job} />)}
+            </div> : <EmptyState title={t("jobs.empty")} body={t("jobs.emptyBody")} />}
     </div>
   </PageHero>;
 }
@@ -343,8 +354,8 @@ function ApplicationPage() {
   </PageHero>;
 }
 
-function FormField({ label, name, type = "text", required = false, autoComplete, defaultValue, maxLength = 200, pattern, placeholder }: { label: string; name: string; type?: string; required?: boolean; autoComplete?: string; defaultValue?: string | number | null; maxLength?: number; pattern?: string; placeholder?: string }) {
-  return <label className="form-field"><span>{label}{required && <i> *</i>}</span><input name={name} type={type} required={required} autoComplete={autoComplete} maxLength={maxLength} pattern={pattern} placeholder={placeholder} defaultValue={defaultValue ?? ""} /></label>;
+function FormField({ label, name, type = "text", required = false, autoComplete, defaultValue, maxLength = 200, pattern, placeholder, min, step }: { label: string; name: string; type?: string; required?: boolean; autoComplete?: string; defaultValue?: string | number | null; maxLength?: number; pattern?: string; placeholder?: string; min?: number; step?: number | "any" }) {
+  return <label className="form-field"><span>{label}{required && <i> *</i>}</span><input name={name} type={type} required={required} autoComplete={autoComplete} maxLength={maxLength} pattern={pattern} placeholder={placeholder} defaultValue={defaultValue ?? ""} min={min} step={step} /></label>;
 }
 
 function InfoPage({ titleKey, bodyKey }: { titleKey: Key; bodyKey: Key }) {
@@ -477,7 +488,9 @@ function AdminPanel() {
   const [state, setState] = useState<AdminState>(isSupabaseConfigured ? "loading" : "unconfigured");
   const [rows, setRows] = useState<Record<string, unknown>[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
+  const [jobsLoading, setJobsLoading] = useState(false);
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
   const [showJobForm, setShowJobForm] = useState(false);
   const [verificationJob, setVerificationJob] = useState<Job | null>(null);
@@ -523,8 +536,17 @@ function AdminPanel() {
         const { data, error: queryError } = await supabase.from("enquiries").select("id, name, email, phone, enquiry_type, message, created_at").order("created_at", { ascending: false });
         if (active) { setRows(data ?? []); if (queryError) setError(t("common.error")); }
       } else if (section === "jobs") {
-        const { data, error: queryError } = await supabase.from("jobs").select("*").order("created_at", { ascending: false });
-        if (active) { setJobs((data ?? []) as Job[]); if (queryError) setError(t("common.error")); }
+        setJobsLoading(true);
+        try {
+          const { data, error: queryError } = await supabase.from("jobs").select("*").order("created_at", { ascending: false });
+          if (!active) return;
+          if (queryError) setError(t("common.error"));
+          else setJobs((data ?? []) as Job[]);
+        } catch {
+          if (active) setError(t("common.error"));
+        } finally {
+          if (active) setJobsLoading(false);
+        }
       } else {
         const { data, error: queryError } = await supabase.from("applications").select("id, status").order("created_at", { ascending: false }).limit(6);
         if (active) { setRows(data ?? []); if (queryError) setError(t("common.error")); }
@@ -558,10 +580,11 @@ function AdminPanel() {
     <section className="admin-content"><div className="admin-heading"><div><p className="eyebrow">ADMINISTRATION</p><h1>{t(sectionName as Key)}</h1></div>
       {section === "jobs" && <button className="button button-gold" onClick={() => { setEditingJob(null); setShowJobForm(true); }}>+ Add vacancy</button>}</div>
       {error && <InlineNotice>{error}</InlineNotice>}
-      {section === "jobs" ? <AdminJobs jobs={jobs} onEdit={job => { setEditingJob(job); setShowJobForm(true); }} onVerify={setVerificationJob} onRefresh={() => setRefreshKey(value => value + 1)} /> :
+      {success && <div className="success-notice" role="status">{success}</div>}
+      {section === "jobs" ? jobsLoading ? <div className="jobs-loading" role="status">Loading vacancies…</div> : <AdminJobs jobs={jobs} onEdit={job => { setEditingJob(job); setShowJobForm(true); }} onVerify={setVerificationJob} onRefresh={message => { setSuccess(message); setError(""); setRefreshKey(value => value + 1); }} /> :
         section === "applications" ? <AdminApplications rows={rows} onRefresh={() => setRefreshKey(value => value + 1)} /> :
           section === "enquiries" ? <AdminEnquiries rows={rows} onRefresh={() => setRefreshKey(value => value + 1)} /> : <AdminOverview rows={rows} />}
-      {showJobForm && <JobEditor job={editingJob} onClose={() => setShowJobForm(false)} onSaved={() => { setShowJobForm(false); setRefreshKey(value => value + 1); }} />}
+      {showJobForm && <JobEditor job={editingJob} onClose={() => setShowJobForm(false)} onSaved={message => { setShowJobForm(false); setSuccess(message); setError(""); setRefreshKey(value => value + 1); }} />}
       {verificationJob && <VerificationEditor job={verificationJob} onClose={() => setVerificationJob(null)} />}
     </section>
   </div></div>;
@@ -573,21 +596,55 @@ function AdminOverview({ rows }: { rows: Record<string, unknown>[] }) {
   return <><div className="admin-stat-grid"><div><span>Latest application</span><strong>{latestApplication}</strong></div><div><span>Candidate data</span><strong>Admin-only</strong></div><div><span>Vacancy workflow</span><strong>Draft → verify → publish</strong></div></div><div className="admin-note"><ShieldCheck /><p>Only authorized administrators can access private candidate and employer enquiry records. Do not export or share personal data unless necessary and authorized.</p></div><Link to="/admin/applications" className="text-link">{t("admin.applications")}<ArrowRight size={16} /></Link></>;
 }
 
-function AdminJobs({ jobs, onEdit, onVerify, onRefresh }: { jobs: Job[]; onEdit: (job: Job) => void; onVerify: (job: Job) => void; onRefresh: () => void }) {
+function AdminJobs({ jobs, onEdit, onVerify, onRefresh }: { jobs: Job[]; onEdit: (job: Job) => void; onVerify: (job: Job) => void; onRefresh: (message: string) => void }) {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+  const [actionError, setActionError] = useState("");
+  const [busyJobId, setBusyJobId] = useState("");
   const visibleJobs = jobs.filter(job =>
     `${job.title} ${job.reference_code} ${job.country}`.toLowerCase().includes(search.toLowerCase())
     && (!statusFilter || job.publication_status === statusFilter),
   );
-  async function archiveJob(job: Job) {
-    if (!supabase || !window.confirm(`Archive ${job.title}?`)) return;
-    const { error } = await supabase.from("jobs").update({ publication_status: "archived" }).eq("id", job.id);
-    if (error) { window.alert("Unable to archive this vacancy."); return; }
-    onRefresh();
+  async function updateStatus(job: Job, status: "draft" | "published" | "closed") {
+    if (!supabase || busyJobId) return;
+    if (status === "published" && !window.confirm(`Publish ${job.title}? Published vacancy details are visible to the public.`)) return;
+    setBusyJobId(job.id);
+    setActionError("");
+    const { error: updateError } = await supabase.from("jobs").update({ publication_status: status }).eq("id", job.id);
+    setBusyJobId("");
+    if (updateError) {
+      setActionError(status === "published"
+        ? "Unable to publish this vacancy. Complete and save the private employer verification first, then set its verification status to Verified."
+        : "Unable to update this vacancy. Please try again.");
+      return;
+    }
+    onRefresh(status === "published" ? "Vacancy published." : status === "closed" ? "Vacancy closed." : "Vacancy unpublished and saved as a draft.");
   }
-  return <><div className="admin-list-filters"><label className="admin-search"><Search size={15} /><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search vacancies" /></label><select value={statusFilter} onChange={event => setStatusFilter(event.target.value)}><option value="">All publication states</option>{["draft", "published", "paused", "closed", "archived"].map(status => <option key={status} value={status}>{status}</option>)}</select></div><div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Vacancy</th><th>Reference</th><th>Verification</th><th>Publication</th><th>Actions</th></tr></thead><tbody>
-    {visibleJobs.map(job => <tr key={job.id}><td><strong>{job.title}</strong><small>{job.country} · {job.category}</small></td><td>{job.reference_code}</td><td>{job.verification_status}</td><td>{job.publication_status}</td><td><button className="small-action" onClick={() => onEdit(job)}>Edit</button><button className="small-action" onClick={() => onVerify(job)}>Verification</button>{job.publication_status !== "archived" && <button className="small-action danger-action" onClick={() => void archiveJob(job)}>Archive</button>}</td></tr>)}
+  async function deleteJob(job: Job) {
+    if (!supabase || busyJobId || !window.confirm(`Permanently delete ${job.title}? This cannot be undone.`)) return;
+    setBusyJobId(job.id);
+    setActionError("");
+    const { error: deleteError } = await supabase.from("jobs").delete().eq("id", job.id);
+    setBusyJobId("");
+    if (deleteError) {
+      setActionError(deleteError.message.includes("foreign key")
+        ? "This vacancy has applications and cannot be deleted. Close it instead to preserve application records."
+        : "Unable to delete this vacancy. Please try again.");
+      return;
+    }
+    onRefresh("Vacancy deleted.");
+  }
+  return <>{actionError && <InlineNotice>{actionError}</InlineNotice>}<div className="admin-list-filters"><label className="admin-search"><Search size={15} /><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search vacancies" /></label><select value={statusFilter} onChange={event => setStatusFilter(event.target.value)}><option value="">All publication states</option>{["draft", "published", "paused", "closed", "archived"].map(status => <option key={status} value={status}>{status}</option>)}</select></div><div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Vacancy</th><th>Reference</th><th>Verification</th><th>Publication</th><th>Actions</th></tr></thead><tbody>
+    {visibleJobs.map(job => <tr key={job.id}><td><strong>{job.title}</strong><small>{job.country} · {job.category}</small></td><td>{job.reference_code}</td><td>{job.verification_status}</td><td>{job.publication_status}</td><td className="job-actions">
+      <button className="small-action" disabled={busyJobId === job.id || Boolean(busyJobId)} onClick={() => onEdit(job)}>Edit</button>
+      <button className="small-action" disabled={busyJobId === job.id || Boolean(busyJobId)} onClick={() => onVerify(job)}>Verification</button>
+      {job.publication_status === "published"
+        ? <button className="small-action" disabled={Boolean(busyJobId)} onClick={() => void updateStatus(job, "draft")}>Unpublish</button>
+        : <button className="small-action" disabled={Boolean(busyJobId)} onClick={() => void updateStatus(job, "published")}>Publish</button>}
+      {job.publication_status !== "closed" && <button className="small-action" disabled={Boolean(busyJobId)} onClick={() => void updateStatus(job, "closed")}>Close</button>}
+      <button className="small-action danger-action" disabled={Boolean(busyJobId)} onClick={() => void deleteJob(job)}>Delete</button>
+      {busyJobId === job.id && <small role="status">Saving…</small>}
+    </td></tr>)}
     {!visibleJobs.length && <tr><td colSpan={5}>No matching vacancies.</td></tr>}
   </tbody></table></div></>;
 }
@@ -683,7 +740,7 @@ function VerificationEditor({ job, onClose }: { job: Job; onClose: () => void })
   </div>;
 }
 
-function JobEditor({ job, onClose, onSaved }: { job: Job | null; onClose: () => void; onSaved: () => void }) {
+function JobEditor({ job, onClose, onSaved }: { job: Job | null; onClose: () => void; onSaved: (message: string) => void }) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   async function save(event: FormEvent<HTMLFormElement>) {
@@ -723,11 +780,22 @@ function JobEditor({ job, onClose, onSaved }: { job: Job | null; onClose: () => 
       publication_status: String(form.get("publication_status")),
       verified_at: String(form.get("verification_status")) === "verified" ? new Date().toISOString() : null,
     };
-    const result = job
-      ? await supabase.from("jobs").update(record).eq("id", job.id)
-      : await supabase.from("jobs").insert(record);
-    if (result.error) { setError("The vacancy could not be saved. Check all fields and confirm the job is verified before publishing."); setBusy(false); return; }
-    onSaved();
+    try {
+      const result = job
+        ? await supabase.from("jobs").update(record).eq("id", job.id)
+        : await supabase.from("jobs").insert(record);
+      if (result.error) {
+        setError(record.publication_status === "published"
+          ? "The vacancy could not be published. Complete private employer verification and set the verification status to Verified first."
+          : "The vacancy could not be saved. Check the required fields, slug format, and salary range.");
+        return;
+      }
+      onSaved(job ? "Vacancy changes saved." : "Vacancy created as a draft.");
+    } catch {
+      setError("Unable to save the vacancy. Check your connection and try again.");
+    } finally {
+      setBusy(false);
+    }
   }
   return <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
     <form className="job-editor" onSubmit={save} role="dialog" aria-modal="true" aria-labelledby="job-editor-title">
@@ -736,18 +804,18 @@ function JobEditor({ job, onClose, onSaved }: { job: Job | null; onClose: () => 
         <FormField label="Job title" name="title" required defaultValue={job?.title} /><FormField label="Reference code" name="reference" required defaultValue={job?.reference_code} />
         <FormField label="URL slug" name="slug" required defaultValue={job?.slug} /><FormField label="City" name="city" required defaultValue={job?.city} />
         <FormField label="Country" name="country" required defaultValue={job?.country} /><FormField label="Industry" name="category" required defaultValue={job?.category} />
-        <FormField label="Employer display name (lawful disclosure only)" name="employer_display_name" defaultValue={job?.employer_display_name} />
+        <FormField label="Employer name (shown only if disclosure is permitted)" name="employer_display_name" defaultValue={job?.employer_display_name} maxLength={160} />
         <label className="form-field"><span>Employer disclosure</span><select name="employer_disclosure_status" defaultValue={job?.employer_disclosure_status ?? "awaiting_confirmation"}><option value="awaiting_confirmation">Awaiting confirmation</option><option value="disclosed">Disclosed</option><option value="confidential">Confidential</option></select></label>
         <FormField label="Employment type" name="employment_type" defaultValue={job?.employment_type} /><FormField label="Contract duration" name="contract_duration" defaultValue={job?.contract_duration} />
         <FormField label="Number of vacancies (confirmed only)" name="vacancies_count" type="number" defaultValue={job?.vacancies_count} />
         <label className="form-field"><span>Verification status</span><select name="verification_status" defaultValue={job?.verification_status ?? "awaiting_confirmation"}><option value="awaiting_confirmation">Awaiting confirmation</option><option value="verified">Verified</option></select></label>
-        <label className="form-field"><span>Publication status</span><select name="publication_status" defaultValue={job?.publication_status ?? "draft"}><option value="draft">Draft</option><option value="published">Published</option><option value="paused">Paused</option><option value="closed">Closed</option></select></label>
+        <label className="form-field"><span>Publication status</span><select name="publication_status" defaultValue={job?.publication_status ?? "draft"}><option value="draft">Draft</option><option value="published">Published</option><option value="closed">Closed</option><option value="paused">Paused</option></select></label>
         <label className="form-field"><span>Experience level</span><select name="experience_level" defaultValue={job?.experience_level ?? ""}><option value="">Awaiting confirmation</option><option>Entry</option><option>Mid</option><option>Senior</option></select></label>
-        <FormField label="Salary min (confirmed only)" name="salary_min" type="number" defaultValue={job?.salary_min} /><FormField label="Salary max (confirmed only)" name="salary_max" type="number" defaultValue={job?.salary_max} /><FormField label="Currency" name="currency" defaultValue={job?.salary_currency} />
+        <FormField label="Salary min (confirmed only)" name="salary_min" type="number" min={0} step={0.01} defaultValue={job?.salary_min} /><FormField label="Salary max (confirmed only)" name="salary_max" type="number" min={0} step={0.01} defaultValue={job?.salary_max} /><FormField label="Currency" name="currency" maxLength={3} placeholder="e.g. AED" defaultValue={job?.salary_currency} />
         <FormField label="Application deadline" name="deadline" type="date" defaultValue={job?.application_deadline} />
-        <label className="form-field full-field"><span>Job description</span><textarea name="description" rows={3} defaultValue={job?.description ?? ""} /></label>
+        <label className="form-field full-field"><span>Job description</span><textarea name="description" rows={3} required maxLength={10000} defaultValue={job?.description ?? ""} /></label>
         <label className="form-field full-field"><span>Responsibilities</span><textarea name="responsibilities" rows={3} defaultValue={job?.responsibilities ?? ""} /></label>
-        <label className="form-field full-field"><span>Qualifications</span><textarea name="qualifications" rows={3} defaultValue={job?.qualifications ?? ""} /></label>
+        <label className="form-field full-field"><span>Requirements and qualifications</span><textarea name="qualifications" rows={3} required maxLength={4000} defaultValue={job?.qualifications ?? ""} /></label>
         <label className="form-field full-field"><span>Experience requirements</span><textarea name="experience" rows={2} defaultValue={job?.experience_requirements ?? ""} /></label>
         <label className="form-field full-field"><span>Benefits (confirmed only)</span><textarea name="benefits" rows={2} defaultValue={job?.benefits ?? ""} /></label>
         <label className="form-field full-field"><span>Working hours</span><textarea name="working_hours" rows={2} defaultValue={job?.working_hours ?? ""} /></label>
