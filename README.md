@@ -45,13 +45,15 @@ npm run preview
 
    The public contact page and footer include the GulfBridge enquiry email and Instagram profile as code defaults. Set optional phone, WhatsApp and address values in the deployment platform's Vite environment variables to show those additional details; Vite variables are embedded at build time, so changing them requires a new deployment.
 
-2. Apply the database migration using the Supabase CLI:
+2. Apply the database migrations. For a new Supabase project, use the Supabase CLI:
 
    ```sh
    npx supabase login
    npx supabase link --project-ref YOUR_PROJECT_REF
    npx supabase db push
    ```
+
+   This GulfBridge project already has a legacy `public.jobs` table with bigint IDs. Back up the database first, then apply [`20261022000000_legacy_jobs_compatibility.sql`](./supabase/migrations/20261022000000_legacy_jobs_compatibility.sql) in the Supabase SQL Editor. Do not run `20261020000000_initial_schema.sql` directly against that existing table: it assumes a different schema and UUID job IDs. The compatibility migration retains the existing IDs and published-only RLS policy, adds the application and private employer-verification schema, and restricts browser reads to approved vacancy columns. Existing published rows, if any, are returned to Draft until an administrator completes private verification and republishes them.
 
 3. Configure and deploy the public-submission Edge Function. The Supabase service-role key is read only by the server-side Edge Function and must never be exposed to the frontend. `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are provided to deployed Supabase functions; configure a long random salt and the production/local origin allow-list:
 
@@ -76,7 +78,7 @@ npm run preview
 
    Disable public sign-ups in Supabase Auth unless there is a deliberate, separately secured account-provisioning process. Ordinary Auth registrations receive only a candidate profile; they cannot view or change the admin allowlist or add themselves to it. Never put a Supabase service-role/secret key in the frontend or a `VITE_` variable.
 
-5. In `/admin/jobs`, add or edit vacancies, change publication state, and delete records that have no linked applications. Public `/jobs` results are fetched from Supabase and only published, in-deadline vacancies are visible through the database RLS policy. For publication, open the row's private **Verification** editor, record the review in private notes (at least 5 characters), and check **Verification review is complete**; this records the administrator UUID and verification timestamp in `public.employer_verifications`. Employer legal name and partner registration details are optional reference fields; no private documents are uploaded or exposed. Then edit the vacancy, set its separate `public.jobs.verification_status` to `Verified`, save, and publish. The database requires both the verified vacancy row and its completed private employer-verification record. Admin changes to employer verification are audited in `public.audit_logs`. Jobs with linked applications cannot be deleted; close them instead to preserve application records. Only publish information confirmed by authorized sources.
+5. In `/admin/jobs`, add or edit vacancies, change publication state, and delete records that have no linked applications. Public `/jobs` results are fetched from Supabase and limited by the published-only database RLS policy; the submission endpoint also rejects expired vacancies. For publication, open the row's private **Verification** editor, record the review in private notes (at least 5 characters), and check **Verification review is complete**; this records the administrator UUID and verification timestamp in `public.employer_verifications`. Employer legal name and partner registration details are optional reference fields; no private documents are uploaded or exposed. Then edit the vacancy, set its separate `public.jobs.verification_status` to `Verified`, save, and publish. The database requires both the verified vacancy row and its completed private employer-verification record. Admin changes to employer verification are audited in `public.audit_logs`. Jobs with linked applications cannot be deleted; close them instead to preserve application records. Only publish information confirmed by authorized sources.
 
 ## Database and privacy notes
 

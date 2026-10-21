@@ -8,7 +8,7 @@ import {
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import en from "./i18n/en.json";
 import ml from "./i18n/ml.json";
-import { getPublishedJob, listPublishedJobs, submitApplication, submitEnquiry } from "./lib/data";
+import { getPublishedJob, JOB_SELECT_COLUMNS, listPublishedJobs, submitApplication, submitEnquiry } from "./lib/data";
 import type { Job } from "./lib/data";
 import { isSupabaseConfigured, supabase } from "./lib/supabase";
 
@@ -308,7 +308,7 @@ function ApplicationPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [reference, setReference] = useState("");
-  useEffect(() => { listPublishedJobs().then(jobs => setJob(jobs.find(item => item.id === jobId) ?? null)).catch(() => setError(t("common.error"))).finally(() => setLoading(false)); }, [jobId, t]);
+  useEffect(() => { listPublishedJobs().then(jobs => setJob(jobs.find(item => String(item.id) === jobId) ?? null)).catch(() => setError(t("common.error"))).finally(() => setLoading(false)); }, [jobId, t]);
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setError("");
     if (!job) { setError(t("common.error")); return; }
@@ -327,7 +327,9 @@ function ApplicationPage() {
         message: String(form.get("message")).trim(),
       });
       setReference(receipt);
-    } catch { setError(t("common.error")); }
+    } catch (error) {
+      setError(error instanceof Error ? error.message : t("common.error"));
+    }
   }
   if (loading) return <div className="container page-state">Loading application…</div>;
   if (reference) return <div className="container page-state"><div className="success-card"><span className="success-icon"><Check /></span><p className="eyebrow">APPLICATION RECEIPT</p><h1>{t("apply.success")}</h1><p>{t("apply.successBody", { reference })}</p><Link to="/jobs" className="button button-navy">Back to vacancies</Link></div></div>;
@@ -398,7 +400,9 @@ function ContactPage() {
         message: String(form.get("message")).trim(),
       });
       setSent(true);
-    } catch { setMessage(t("common.error")); }
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : t("common.error"));
+    }
   }
   return <PageHero eyebrow="LET'S CONNECT" title={t("contact.title")} body={t("contact.intro")}><div className="container form-wrap contact-wrap">
     <div className="contact-details"><h2>GulfBridge Overseas</h2><p>Reach us by email or follow us on Instagram.</p>
@@ -440,13 +444,25 @@ function publicationFailureMessage(error: { code?: string; message?: string; det
   if (details.includes("private_employer_verification_required")) {
     return "Private employer verification is incomplete. Open Verification, save review notes of at least 5 characters, and mark the review complete. Then edit the vacancy, set its verification status to Verified, save, and retry publishing.";
   }
+  if (details.includes("unpublish_job_before_reversing_verification")) {
+    return "This vacancy is currently published. Unpublish or close it before changing or removing its completed private verification.";
+  }
   if (error.code === "23514") {
-    return "Database validation blocked publication. Set the vacancy verification status to Verified and save a completed private employer verification record with notes of at least 5 characters.";
+    return `Database validation blocked publication${error.message ? ` (${error.message})` : ""}. Confirm the vacancy verification status is Verified and the private employer review is complete.`;
   }
   if (error.code === "42501") {
     return "Supabase denied this action. Confirm this account is authorized in public.admin_users and the admin and schema migrations have been applied.";
   }
-  return "Unable to publish this vacancy. Check the vacancy and private employer verification, then try again.";
+  if (error.code === "23505") {
+    return `A vacancy already uses one of these unique values. Change the reference code or URL slug and retry.${error.message ? ` (${error.message})` : ""}`;
+  }
+  if (error.code === "23503") {
+    return `Publication was blocked because a related database record is missing or in use.${error.message ? ` (${error.message})` : ""}`;
+  }
+  if (error.code === "23502") {
+    return `Publication was blocked because a required vacancy field is empty.${error.message ? ` (${error.message})` : ""}`;
+  }
+  return `Supabase rejected publication${error.code ? ` (code ${error.code})` : ""}${error.message ? `: ${error.message}` : ". Check the vacancy and private employer verification, then try again."}`;
 }
 
 function AdminLogin() {
@@ -586,10 +602,10 @@ function AdminPanel() {
       } else if (section === "jobs") {
         setJobsLoading(true);
         try {
-          const { data, error: queryError } = await supabase.from("jobs").select("*").order("created_at", { ascending: false });
+          const { data, error: queryError } = await supabase.from("jobs").select<typeof JOB_SELECT_COLUMNS, Job>(JOB_SELECT_COLUMNS).order("created_at", { ascending: false });
           if (!active) return;
           if (queryError) setError(t("common.error"));
-          else setJobs((data ?? []) as Job[]);
+          else setJobs(data ?? []);
         } catch {
           if (active) setError(t("common.error"));
         } finally {
@@ -665,19 +681,26 @@ function AdminJobs({ jobs, onEdit, onVerify, onRefresh }: { jobs: Job[]; onEdit:
   async function updateStatus(job: Job, status: "draft" | "published" | "closed") {
     if (!supabase || busyJobId) return;
     if (status === "published" && !window.confirm(`Publish ${job.title}? Published vacancy details are visible to the public.`)) return;
-    setBusyJobId(job.id);
+    setBusyJobId(String(job.id));
     setActionError("");
-    const { error: updateError } = await supabase.from("jobs").update({ publication_status: status }).eq("id", job.id);
-    setBusyJobId("");
-    if (updateError) {
-      setActionError(status === "published" ? publicationFailureMessage(updateError) : "Unable to update this vacancy. Please try again.");
-      return;
+    try {
+      const { error: updateError } = await supabase.from("jobs").update({ publication_status: status }).eq("id", job.id);
+      if (updateError) {
+        setActionError(status === "published" ? publicationFailureMessage(updateError) : "Unable to update this vacancy. Please try again.");
+        return;
+      }
+      onRefresh(status === "published" ? "Vacancy published." : status === "closed" ? "Vacancy closed." : "Vacancy unpublished and saved as a draft.");
+    } catch (error) {
+      setActionError(status === "published"
+        ? publicationFailureMessage({ message: error instanceof Error ? error.message : "Network or browser error" })
+        : "Unable to update this vacancy. Check your connection and try again.");
+    } finally {
+      setBusyJobId("");
     }
-    onRefresh(status === "published" ? "Vacancy published." : status === "closed" ? "Vacancy closed." : "Vacancy unpublished and saved as a draft.");
   }
   async function deleteJob(job: Job) {
     if (!supabase || busyJobId || !window.confirm(`Permanently delete ${job.title}? This cannot be undone.`)) return;
-    setBusyJobId(job.id);
+    setBusyJobId(String(job.id));
     setActionError("");
     const { error: deleteError } = await supabase.from("jobs").delete().eq("id", job.id);
     setBusyJobId("");
@@ -691,14 +714,14 @@ function AdminJobs({ jobs, onEdit, onVerify, onRefresh }: { jobs: Job[]; onEdit:
   }
   return <>{actionError && <InlineNotice>{actionError}</InlineNotice>}<div className="admin-list-filters"><label className="admin-search"><Search size={15} /><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search vacancies" /></label><select value={statusFilter} onChange={event => setStatusFilter(event.target.value)}><option value="">All publication states</option>{["draft", "published", "paused", "closed", "archived"].map(status => <option key={status} value={status}>{status}</option>)}</select></div><div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Vacancy</th><th>Reference</th><th>Verification</th><th>Publication</th><th>Actions</th></tr></thead><tbody>
     {visibleJobs.map(job => <tr key={job.id}><td><strong>{job.title}</strong><small>{job.country} · {job.category}</small></td><td>{job.reference_code}</td><td>{job.verification_status}</td><td>{job.publication_status}</td><td className="job-actions">
-      <button className="small-action" disabled={busyJobId === job.id || Boolean(busyJobId)} onClick={() => onEdit(job)}>Edit</button>
-      <button className="small-action" disabled={busyJobId === job.id || Boolean(busyJobId)} onClick={() => onVerify(job)}>Verification</button>
+      <button className="small-action" disabled={busyJobId === String(job.id) || Boolean(busyJobId)} onClick={() => onEdit(job)}>Edit</button>
+      <button className="small-action" disabled={busyJobId === String(job.id) || Boolean(busyJobId)} onClick={() => onVerify(job)}>Verification</button>
       {job.publication_status === "published"
         ? <button className="small-action" disabled={Boolean(busyJobId)} onClick={() => void updateStatus(job, "draft")}>Unpublish</button>
         : <button className="small-action" disabled={Boolean(busyJobId)} onClick={() => void updateStatus(job, "published")}>Publish</button>}
       {job.publication_status !== "closed" && <button className="small-action" disabled={Boolean(busyJobId)} onClick={() => void updateStatus(job, "closed")}>Close</button>}
       <button className="small-action danger-action" disabled={Boolean(busyJobId)} onClick={() => void deleteJob(job)}>Delete</button>
-      {busyJobId === job.id && <small role="status">Saving…</small>}
+      {busyJobId === String(job.id) && <small role="status">Saving…</small>}
     </td></tr>)}
     {!visibleJobs.length && <tr><td colSpan={5}>No matching vacancies.</td></tr>}
   </tbody></table></div></>;
@@ -855,6 +878,11 @@ function JobEditor({ job, onClose, onSaved }: { job: Job | null; onClose: () => 
       publication_status: String(form.get("publication_status")),
       verified_at: String(form.get("verification_status")) === "verified" ? new Date().toISOString() : null,
     };
+    if (!job && record.publication_status === "published") {
+      setError("Save a new vacancy as Draft first. Complete its private employer verification, set the vacancy verification status to Verified, and then publish it from the vacancy list.");
+      setBusy(false);
+      return;
+    }
     try {
       const result = job
         ? await supabase.from("jobs").update(record).eq("id", job.id)
