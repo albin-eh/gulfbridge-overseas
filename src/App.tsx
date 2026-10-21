@@ -440,15 +440,8 @@ async function hasAdminAccess(): Promise<boolean> {
 }
 
 function publicationFailureMessage(error: { code?: string; message?: string; details?: string; hint?: string }): string {
-  const details = [error.message, error.details, error.hint].filter(Boolean).join(" ").toLowerCase();
-  if (details.includes("private_employer_verification_required")) {
-    return "Private employer verification is incomplete. Open Verification, save review notes of at least 5 characters, and mark the review complete. Then edit the vacancy, set its verification status to Verified, save, and retry publishing.";
-  }
-  if (details.includes("unpublish_job_before_reversing_verification")) {
-    return "This vacancy is currently published. Unpublish or close it before changing or removing its completed private verification.";
-  }
   if (error.code === "23514") {
-    return `Database validation blocked publication${error.message ? ` (${error.message})` : ""}. Confirm the vacancy verification status is Verified and the private employer review is complete.`;
+    return `Database validation blocked publication${error.message ? ` (${error.message})` : ""}. Mark the vacancy Verified after checking its details, then retry.`;
   }
   if (error.code === "42501") {
     return "Supabase denied this action. Confirm this account is authorized in public.admin_users and the admin and schema migrations have been applied.";
@@ -462,7 +455,7 @@ function publicationFailureMessage(error: { code?: string; message?: string; det
   if (error.code === "23502") {
     return `Publication was blocked because a required vacancy field is empty.${error.message ? ` (${error.message})` : ""}`;
   }
-  return `Supabase rejected publication${error.code ? ` (code ${error.code})` : ""}${error.message ? `: ${error.message}` : ". Check the vacancy and private employer verification, then try again."}`;
+  return `Supabase rejected publication${error.code ? ` (code ${error.code})` : ""}${error.message ? `: ${error.message}` : ". Check the vacancy details and verification status, then try again."}`;
 }
 
 function AdminLogin() {
@@ -557,7 +550,6 @@ function AdminPanel() {
   const [success, setSuccess] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
   const [showJobForm, setShowJobForm] = useState(false);
-  const [verificationJob, setVerificationJob] = useState<Job | null>(null);
   const [editingJob, setEditingJob] = useState<Job | null>(null);
   const section = location.pathname.split("/")[2] || "overview";
   const sectionName = section === "overview" ? "admin.dashboard" : section === "jobs" ? "admin.jobs" : section === "applications" ? "admin.applications" : "admin.enquiries";
@@ -645,20 +637,10 @@ function AdminPanel() {
       {section === "jobs" && <button className="button button-gold" onClick={() => { setEditingJob(null); setShowJobForm(true); }}>+ Add vacancy</button>}</div>
       {error && <InlineNotice>{error}</InlineNotice>}
       {success && <div className="success-notice" role="status">{success}</div>}
-      {section === "jobs" ? jobsLoading ? <div className="jobs-loading" role="status">Loading vacancies…</div> : <AdminJobs jobs={jobs} onEdit={job => { setEditingJob(job); setShowJobForm(true); }} onVerify={setVerificationJob} onRefresh={message => { setSuccess(message); setError(""); setRefreshKey(value => value + 1); }} /> :
+      {section === "jobs" ? jobsLoading ? <div className="jobs-loading" role="status">Loading vacancies…</div> : <AdminJobs jobs={jobs} onEdit={job => { setEditingJob(job); setShowJobForm(true); }} onRefresh={message => { setSuccess(message); setError(""); setRefreshKey(value => value + 1); }} /> :
         section === "applications" ? <AdminApplications rows={rows} onRefresh={() => setRefreshKey(value => value + 1)} /> :
           section === "enquiries" ? <AdminEnquiries rows={rows} onRefresh={() => setRefreshKey(value => value + 1)} /> : <AdminOverview rows={rows} />}
       {showJobForm && <JobEditor job={editingJob} onClose={() => setShowJobForm(false)} onSaved={message => { setShowJobForm(false); setSuccess(message); setError(""); setRefreshKey(value => value + 1); }} />}
-      {verificationJob && <VerificationEditor
-        job={verificationJob}
-        onClose={() => setVerificationJob(null)}
-        onSaved={message => {
-          setVerificationJob(null);
-          setSuccess(message);
-          setError("");
-          setRefreshKey(value => value + 1);
-        }}
-      />}
     </section>
   </div></div>;
 }
@@ -669,7 +651,7 @@ function AdminOverview({ rows }: { rows: Record<string, unknown>[] }) {
   return <><div className="admin-stat-grid"><div><span>Latest application</span><strong>{latestApplication}</strong></div><div><span>Candidate data</span><strong>Admin-only</strong></div><div><span>Vacancy workflow</span><strong>Draft → verify → publish</strong></div></div><div className="admin-note"><ShieldCheck /><p>Only authorized administrators can access private candidate and employer enquiry records. Do not export or share personal data unless necessary and authorized.</p></div><Link to="/admin/applications" className="text-link">{t("admin.applications")}<ArrowRight size={16} /></Link></>;
 }
 
-function AdminJobs({ jobs, onEdit, onVerify, onRefresh }: { jobs: Job[]; onEdit: (job: Job) => void; onVerify: (job: Job) => void; onRefresh: (message: string) => void }) {
+function AdminJobs({ jobs, onEdit, onRefresh }: { jobs: Job[]; onEdit: (job: Job) => void; onRefresh: (message: string) => void }) {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [actionError, setActionError] = useState("");
@@ -715,7 +697,6 @@ function AdminJobs({ jobs, onEdit, onVerify, onRefresh }: { jobs: Job[]; onEdit:
   return <>{actionError && <InlineNotice>{actionError}</InlineNotice>}<div className="admin-list-filters"><label className="admin-search"><Search size={15} /><input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search vacancies" /></label><select value={statusFilter} onChange={event => setStatusFilter(event.target.value)}><option value="">All publication states</option>{["draft", "published", "paused", "closed", "archived"].map(status => <option key={status} value={status}>{status}</option>)}</select></div><div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Vacancy</th><th>Reference</th><th>Verification</th><th>Publication</th><th>Actions</th></tr></thead><tbody>
     {visibleJobs.map(job => <tr key={job.id}><td><strong>{job.title}</strong><small>{job.country} · {job.category}</small></td><td>{job.reference_code}</td><td>{job.verification_status}</td><td>{job.publication_status}</td><td className="job-actions">
       <button className="small-action" disabled={busyJobId === String(job.id) || Boolean(busyJobId)} onClick={() => onEdit(job)}>Edit</button>
-      <button className="small-action" disabled={busyJobId === String(job.id) || Boolean(busyJobId)} onClick={() => onVerify(job)}>Verification</button>
       {job.publication_status === "published"
         ? <button className="small-action" disabled={Boolean(busyJobId)} onClick={() => void updateStatus(job, "draft")}>Unpublish</button>
         : <button className="small-action" disabled={Boolean(busyJobId)} onClick={() => void updateStatus(job, "published")}>Publish</button>}
@@ -773,71 +754,6 @@ function AdminEnquiries({ rows, onRefresh }: { rows: Record<string, unknown>[]; 
   </tbody></table></div></>;
 }
 
-function VerificationEditor({ job, onClose, onSaved }: { job: Job; onClose: () => void; onSaved: (message: string) => void }) {
-  const [record, setRecord] = useState<Record<string, unknown> | null>();
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    async function load() {
-      if (!supabase) return;
-      const { data, error: queryError } = await supabase.from("employer_verifications").select("*").eq("job_id", job.id).maybeSingle();
-      if (queryError) setError("Unable to load private verification information.");
-      else setRecord(data);
-    }
-    void load();
-  }, [job.id]);
-  async function save(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); setBusy(true); setError("");
-    try {
-      if (!supabase) { setError("Supabase is not configured."); return; }
-      const form = new FormData(event.currentTarget);
-      const complete = form.get("complete") === "on";
-      const notes = String(form.get("notes")).trim();
-      if (complete && notes.length < 5) {
-        setError("Add private review notes of at least 5 characters before marking this review complete.");
-        return;
-      }
-      const { data: { user }, error: userError } = await supabase.auth.getUser();
-      if (userError || !user) {
-        setError("Your administrator session could not be verified. Sign in again and retry.");
-        return;
-      }
-      const { error: saveError } = await supabase.from("employer_verifications").upsert({
-        job_id: job.id,
-        employer_legal_name: String(form.get("legal_name")).trim() || null,
-        partner_registration_details: String(form.get("partner_details")).trim() || null,
-        verification_notes: notes || null,
-        verified_by: complete ? user.id : null,
-        verified_at: complete ? new Date().toISOString() : null,
-      });
-      if (saveError) {
-        setError(saveError.message.includes("unpublish_job_before_reversing_verification")
-          ? "Unpublish this vacancy before removing its completed verification."
-          : "Unable to save private verification information. Confirm your administrator access and try again.");
-        return;
-      }
-      onSaved("Private employer verification saved. Set the vacancy's verification status to Verified in Edit before publishing.");
-    } catch {
-      setError("Unable to save private verification information. Check your connection and try again.");
-    } finally {
-      setBusy(false);
-    }
-  }
-  if (record === undefined && !error) return <div className="modal-backdrop"><div className="job-editor">Loading private verification information…</div></div>;
-  return <div className="modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
-    <form className="job-editor verification-editor" onSubmit={save} role="dialog" aria-modal="true" aria-labelledby="verification-title">
-      <div className="modal-heading"><div><p className="eyebrow">PRIVATE · ADMIN ONLY</p><h2 id="verification-title">Employer verification</h2><p className="tiny-muted">{job.reference_code} — {job.title}</p></div><button type="button" className="icon-button" onClick={onClose} aria-label="Close"><X /></button></div>
-      {error && <InlineNotice>{error}</InlineNotice>}
-      <FormField label="Employer legal name" name="legal_name" defaultValue={String(record?.employer_legal_name ?? "")} />
-      <label className="form-field"><span>Partner registration details (if applicable)</span><textarea name="partner_details" rows={3} defaultValue={String(record?.partner_registration_details ?? "")} /></label>
-      <label className="form-field"><span>Private verification notes (at least 5 characters to complete review)</span><textarea name="notes" rows={5} maxLength={4000} defaultValue={String(record?.verification_notes ?? "")} /></label>
-      <label className="consent-row"><input type="checkbox" name="complete" defaultChecked={Boolean(record?.verified_at)} /><span>Verification review is complete; record who reviewed it.</span></label>
-      <p className="tiny-muted">To publish, complete this private review and also set the vacancy's verification status to Verified in Edit. Employer legal name and partner registration details are optional reference fields. Keep confidential evidence out of public vacancy fields; do not upload identity documents here.</p>
-      <div className="modal-actions"><button type="button" className="button button-quiet" onClick={onClose}>Cancel</button><button className="button button-gold" disabled={busy}>{busy ? "Saving…" : "Save private record"}</button></div>
-    </form>
-  </div>;
-}
-
 function JobEditor({ job, onClose, onSaved }: { job: Job | null; onClose: () => void; onSaved: (message: string) => void }) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -874,15 +790,10 @@ function JobEditor({ job, onClose, onSaved }: { job: Job | null; onClose: () => 
       work_permit_information: String(form.get("work_permit_information")).trim() || null,
       required_documents: String(form.get("required_documents")).trim() || null,
       application_deadline: String(form.get("deadline")) || null,
-      verification_status: String(form.get("verification_status")),
-      publication_status: String(form.get("publication_status")),
-      verified_at: String(form.get("verification_status")) === "verified" ? new Date().toISOString() : null,
+      verification_status: job ? String(form.get("verification_status")) : "awaiting_confirmation",
+      publication_status: job ? String(form.get("publication_status")) : "draft",
+      verified_at: job && String(form.get("verification_status")) === "verified" ? new Date().toISOString() : null,
     };
-    if (!job && record.publication_status === "published") {
-      setError("Save a new vacancy as Draft first. Complete its private employer verification, set the vacancy verification status to Verified, and then publish it from the vacancy list.");
-      setBusy(false);
-      return;
-    }
     try {
       const result = job
         ? await supabase.from("jobs").update(record).eq("id", job.id)
@@ -893,7 +804,9 @@ function JobEditor({ job, onClose, onSaved }: { job: Job | null; onClose: () => 
           : "The vacancy could not be saved. Check the required fields, slug format, and salary range.");
         return;
       }
-      onSaved(job ? "Vacancy changes saved." : "Vacancy created as a draft.");
+      onSaved(job
+        ? "Vacancy changes saved."
+        : "Vacancy saved as a draft. Mark it Verified after checking its details, then publish it.");
     } catch {
       setError("Unable to save the vacancy. Check your connection and try again.");
     } finally {
@@ -911,8 +824,10 @@ function JobEditor({ job, onClose, onSaved }: { job: Job | null; onClose: () => 
         <label className="form-field"><span>Employer disclosure</span><select name="employer_disclosure_status" defaultValue={job?.employer_disclosure_status ?? "awaiting_confirmation"}><option value="awaiting_confirmation">Awaiting confirmation</option><option value="disclosed">Disclosed</option><option value="confidential">Confidential</option></select></label>
         <FormField label="Employment type" name="employment_type" defaultValue={job?.employment_type} /><FormField label="Contract duration" name="contract_duration" defaultValue={job?.contract_duration} />
         <FormField label="Number of vacancies (confirmed only)" name="vacancies_count" type="number" defaultValue={job?.vacancies_count} />
-        <label className="form-field"><span>Verification status</span><select name="verification_status" defaultValue={job?.verification_status ?? "awaiting_confirmation"}><option value="awaiting_confirmation">Awaiting confirmation</option><option value="verified">Verified</option></select></label>
-        <label className="form-field"><span>Publication status</span><select name="publication_status" defaultValue={job?.publication_status ?? "draft"}><option value="draft">Draft</option><option value="published">Published</option><option value="closed">Closed</option><option value="paused">Paused</option></select></label>
+        {job ? <>
+          <label className="form-field"><span>Verification status</span><select name="verification_status" defaultValue={job.verification_status}><option value="awaiting_confirmation">Awaiting confirmation</option><option value="verified">Verified</option></select></label>
+          <label className="form-field"><span>Publication status</span><select name="publication_status" defaultValue={job.publication_status}><option value="draft">Draft</option><option value="published">Published</option><option value="closed">Closed</option><option value="paused">Paused</option></select></label>
+        </> : <p className="admin-note full-field">New vacancies start as drafts. After checking the details, edit the vacancy, mark it Verified, and publish it.</p>}
         <label className="form-field"><span>Experience level</span><select name="experience_level" defaultValue={job?.experience_level ?? ""}><option value="">Awaiting confirmation</option><option>Entry</option><option>Mid</option><option>Senior</option></select></label>
         <FormField label="Salary min (confirmed only)" name="salary_min" type="number" min={0} step={0.01} defaultValue={job?.salary_min} /><FormField label="Salary max (confirmed only)" name="salary_max" type="number" min={0} step={0.01} defaultValue={job?.salary_max} /><FormField label="Currency" name="currency" maxLength={3} placeholder="e.g. AED" defaultValue={job?.salary_currency} />
         <FormField label="Application deadline" name="deadline" type="date" defaultValue={job?.application_deadline} />
